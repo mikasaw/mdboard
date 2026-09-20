@@ -179,6 +179,21 @@ def test_crlf_and_cr_and_lf_parse_identically(tmp_path):
     assert (cr_task.title, cr_task.status, cr_task.tags) == (lf_task.title, lf_task.status, lf_task.tags)
 
 
+def test_parser_normalizes_line_endings_itself(tmp_path):
+    """M4：字节层面确实是 CRLF / CR，归一化必须由解析器自己完成而不是 pathlib 代偿。"""
+    body = "---\ntitle: 换行\nstatus: Doing\ntags: a, b\n---\n正文\n"
+    crlf = md(tmp_path, "crlf.md", body, newline="\r\n")
+    cr = md(tmp_path, "cr.md", body, newline="\r")
+
+    assert b"\r\n" in crlf.read_bytes()
+    assert b"\r" in cr.read_bytes() and b"\n" not in cr.read_bytes()  # 真·CR-only
+
+    for path in (crlf, cr):
+        task = parse_file(path)
+        assert (task.title, task.status, task.tags) == ("换行", "doing", ["a", "b"])
+        assert "\r" not in task.title and "\r" not in task.tags[-1]
+
+
 def test_utf8_bom_is_tolerated(tmp_path):
     path = md(tmp_path, "bom.md", "---\ntitle: 带BOM\n---\n", encoding="utf-8-sig")
 

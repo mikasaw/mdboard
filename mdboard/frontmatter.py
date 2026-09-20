@@ -42,7 +42,11 @@ def parse_dir(path: str | Path) -> list[Task]:
 
 
 def _parse_markdown(p: Path, source: str) -> Task:
-    text = p.read_text(encoding="utf-8-sig")
+    # newline="" 关掉读取时的换行翻译，归一化由解析器自己完成（裁决 #11）：
+    # 默认的 newline=None 会让 pathlib 代劳，那两行 replace 就成了杀不死的死代码。
+    # 不用 Path.read_text(newline=...)——该参数 3.13 才有，本契约是 3.10+。
+    with p.open(encoding="utf-8-sig", newline="") as f:
+        text = f.read()
     if text == "":
         raise FrontMatterError(f"{source}: empty file")
 
