@@ -197,6 +197,85 @@ def test_unreadable_fragment_falls_back_to_reparse(tmp_path):
     ).encode("utf-8")
 
 
+# --- M3：state.json 的 key 不可信，不能拿它拼路径删缓存外的文件 -------------
+
+
+def test_state_key_cannot_reach_outside_cards_dir(tmp_path):
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    build(tasks, out)
+
+    victim = tmp_path / "VICTIM.html"  # cards_dir = tmp_path/build/cards，../../ 落在这里
+    victim.write_text("must survive", encoding="utf-8")
+    state = {
+        "../../VICTIM": {
+            "source": "../VICTIM.html",
+            "mtime": 1.0,
+            "size": 1,
+            "status": "todo",
+        }
+    }
+    (out / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    report = build(tasks, out)
+
+    assert victim.exists() and victim.read_text(encoding="utf-8") == "must survive"
+    assert report.removed == []  # 该记录被丢弃，而不是被当成一个待删任务
+    assert report.parsed == ["a.md"]  # 合法记录没了 → 全量重解析
+    saved = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    assert list(saved) == [_key_of("a.md")]
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["../../VICTIM", "a", "", "0123456789abcde", "0123456789abcdef0", "ABCDEF1234567890", "deadbeefdeadbee."],
+)
+def test_load_state_drops_keys_that_are_not_16_lowercase_hex(tmp_path, key):
+    target = tmp_path / "state.json"
+    good = _key_of("a.md")
+    payload = {key: {"source": "x.md", "mtime": 1.0, "size": 1, "status": "todo"},
+               good: {"source": "a.md", "mtime": 2.0, "size": 3, "status": "doing"}}
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert set(load_state(target)) == {good}
+
+
+# --- M6：state.json 里的 status 同样按不可信输入校验 ------------------------
+
+
+@pytest.mark.parametrize("status", ["archived", "TODO", "", "todo ", None])
+def test_load_state_drops_unknown_status(tmp_path, status):
+    target = tmp_path / "state.json"
+    good, bad = _key_of("a.md"), _key_of("z.md")
+    payload = {
+        good: {"source": "a.md", "mtime": 1.0, "size": 1, "status": "todo"},
+        bad: {"source": "z.md", "mtime": 2.0, "size": 3, "status": status},
+    }
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert set(load_state(target)) == {good}
+
+
+def test_illegal_status_in_state_forces_reparse_instead_of_vanishing_card(tmp_path):
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    build(tasks, out)
+
+    key = _key_of("a.md")
+    state = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    state[key]["status"] = "archived"
+    (out / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    report = build(tasks, out)
+
+    assert report.parsed == ["a.md"] and report.reused == []
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert page.count("<h3") == 1  # 卡片没有凭空蒸发
+    assert json.loads((out / "state.json").read_text(encoding="utf-8"))[key]["status"] == "todo"
+
+
 # --- 裁决 #6：out_dir / cards 不存在时创建；非递归输入 --------------------
 
 
@@ -305,7 +384,8 @@ def test_cache_imports_no_private_names_from_render():
 def test_load_state_roundtrips_and_survives_missing(tmp_path):
     missing = tmp_path / "nope.json"
     assert load_state(missing) == {}
-    state = {"k1": TaskMeta(mtime=1.5, size=10, source="a.md", status="todo")}
+    # key 必须是 _key() 的真实形状（16 位小写 hex）——非法 key 的记录会被 load_state 丢弃。
+    state = {_key_of("a.md"): TaskMeta(mtime=1.5, size=10, source="a.md", status="todo")}
     save_state(missing, state)
     assert load_state(missing) == state
 

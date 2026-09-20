@@ -4,11 +4,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from mdboard.frontmatter import MARKDOWN_SUFFIXES, parse_file
 from mdboard.render import COLUMN_STATUSES, render_card, render_page_from_fragments
+
+# state.json 的 key 由 _key() 生成（sha1 前 16 位），也是它唯一合法的形状：key 会参与
+# 拼卡片路径并被 unlink，形状不符的记录整条丢弃。
+STATE_KEY = re.compile(r"\A[0-9a-f]{16}\Z")
 
 
 @dataclass(frozen=True)
@@ -44,14 +49,19 @@ def load_state(cache_file: str | Path) -> dict[str, TaskMeta]:
         return {}
     state: dict[str, TaskMeta] = {}
     for key, rec in raw.items():
-        if not isinstance(rec, dict):
+        # key 与 status 都按不可信输入校验（load_state 其余字段也是这么写的，同一份
+        # 输入不能有两套信任标准）：key 参与拼路径与 unlink，status 决定卡片落哪一列。
+        if not isinstance(rec, dict) or not STATE_KEY.fullmatch(key):
             continue
         try:
+            status = str(rec["status"])
+            if status not in COLUMN_STATUSES:
+                raise ValueError(status)
             state[key] = TaskMeta(
                 mtime=float(rec["mtime"]),
                 size=int(rec["size"]),
                 source=str(rec["source"]),
-                status=str(rec["status"]),
+                status=status,
             )
         except (KeyError, TypeError, ValueError):
             # 单条记录损坏 → 丢弃该条，对应文件按新增重解析；不影响其余快照。
