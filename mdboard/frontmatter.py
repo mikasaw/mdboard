@@ -1,4 +1,9 @@
-"""S1：把带 front-matter 的 Markdown 任务文件解析成 Task。"""
+"""S1：把带 front-matter 的 Markdown 任务文件解析成 Task。
+
+契约细节（均已裁定，改动前先读，别让它以回归形式冒出来）：
+- flow-style 标签里，引号内的逗号属于标签内容：tags: ["a,b", c] → ["a,b", "c"]。
+  引号不配对时退回朴素按逗号切分，不因此吞掉后面的标签。
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -101,10 +106,34 @@ def _read_tags(value: str) -> list[str]:
         value = value[1:]
     if value.endswith("]"):
         value = value[:-1]
-    # 逐项剥离成对引号（与 title/status 同一 _unquote），否则 ["x&y"] 会带出引号污染渲染。
+    # 先按引号感知切分（引号内的逗号属于标签内容），再逐项剥离成对引号——与 title /
+    # status 同一个 _unquote，否则 ["x&y"] 会带出引号污染渲染。
     tags = []
-    for item in value.split(","):
+    for item in _split_flow_items(value):
         tag = _unquote(item)
         if tag:
             tags.append(tag)
     return tags
+
+
+def _split_flow_items(value: str) -> list[str]:
+    quote = ""
+    items: list[str] = []
+    current: list[str] = []
+    for ch in value:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+            current.append(ch)
+        elif ch == ",":
+            items.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if quote:
+        return value.split(",")  # 引号不配对：没有"引号内逗号"可保护，退回朴素切分
+    items.append("".join(current))
+    return items

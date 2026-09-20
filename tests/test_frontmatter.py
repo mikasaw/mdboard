@@ -163,6 +163,39 @@ def test_flow_style_quoted_tag_with_ampersand_and_chinese(tmp_path):
     assert all('"' not in t and "'" not in t for t in tags)
 
 
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ('["a,b", c]', ["a,b", "c"]),
+        ('["a,b"]', ["a,b"]),
+        ('["a,b", "c,d"]', ["a,b", "c,d"]),
+        ("['a, b', c]", ["a, b", "c"]),
+        ('a, "b,c"', ["a", "b,c"]),
+        ('["<a>,b", c]', ["<a>,b", "c"]),
+    ],
+)
+def test_comma_inside_quotes_belongs_to_the_tag(tmp_path, value, expected):
+    """M9 契约：引号内的逗号属于标签内容，切分必须引号感知。"""
+    path = md(tmp_path, "task.md", f"---\ntags: {value}\n---\n")
+
+    tags = parse_file(path).tags
+
+    assert tags == expected
+    assert all('"' not in t and "'" not in t for t in tags)
+
+
+def test_unpaired_quote_falls_back_to_plain_comma_split(tmp_path):
+    path = md(tmp_path, "task.md", '---\ntags: a, "b, c\n---\n')
+
+    assert parse_file(path).tags == ['a', '"b', "c"]
+
+
+def test_apostrophe_inside_double_quoted_tag_survives(tmp_path):
+    path = md(tmp_path, "task.md", '---\ntags: ["it\'s a, b", c]\n---\n')
+
+    assert parse_file(path).tags == ["it's a, b", "c"]
+
+
 # --- 换行与 BOM -------------------------------------------------------------
 
 
