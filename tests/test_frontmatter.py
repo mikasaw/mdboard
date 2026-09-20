@@ -344,12 +344,20 @@ def test_parse_dir_accepts_str_path(tmp_path):
 # --- 契约本身 -------------------------------------------------------------
 
 
-def test_task_is_frozen():
+def test_task_is_shallowly_immutable():
+    """#11：frozen 只锁字段绑定；tags 是 list[str]（契约不改类型），原地改动仍会成功。"""
     task = Task(source="a.md", title="a", status="todo", tags=[])
 
     assert dataclasses.is_dataclass(task)
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        task.title = "changed"  # type: ignore[misc]
+    for field in ("source", "title", "status"):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(task, field, "changed")  # type: ignore[misc]
+
+    task.tags.append("x")  # 浅不可变：list 字段内容可变，别指望 frozen 拦住它
+    assert task.tags == ["x"]
+
+    with pytest.raises(TypeError):
+        hash(task)  # 带 list 字段 → 即便 frozen 也不可哈希
 
 
 def test_frontmatter_module_imports_only_stdlib():
