@@ -276,6 +276,32 @@ def test_illegal_status_in_state_forces_reparse_instead_of_vanishing_card(tmp_pa
     assert json.loads((out / "state.json").read_text(encoding="utf-8"))[key]["status"] == "todo"
 
 
+# --- M5：钉住"复用片段确实来自磁盘上的旧片段"，不是运行时重渲染 -----------
+
+
+def test_reused_page_bytes_come_from_the_fragment_on_disk(tmp_path):
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A", tags=["x"])
+    build(tasks, out)
+
+    marker = '<article class="card"><h3 class="card-title">MARKED-FROM-DISK</h3></article>'
+    fragment = out / "cards" / _card_name("a.md")
+    fragment.write_text(marker, encoding="utf-8", newline="\n")  # 只改片段，state 与 .md 不动
+
+    report = build(tasks, out)
+    page = (out / "index.html").read_text(encoding="utf-8")
+
+    assert report.parsed == [] and report.reused == ["a.md"]  # 裁决 #1 的可观测证据
+    assert page.count("MARKED-FROM-DISK") == 1  # 拼进整页的字节来自磁盘
+    assert "card-title\">A<" not in page  # 而非运行时按 title=A 重渲染
+    assert report.rebuilt_page is True
+    assert fragment.read_text(encoding="utf-8") == marker  # 复用路径不回写片段
+
+    # 标记也没被写回快照：下一次 build 依然复用。
+    assert build(tasks, out).reused == ["a.md"]
+
+
 # --- 裁决 #6：out_dir / cards 不存在时创建；非递归输入 --------------------
 
 
