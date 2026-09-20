@@ -137,6 +137,32 @@ def test_tags_items_are_stripped_and_empties_dropped(tmp_path, raw):
     assert parse_file(path).tags == ["a", "b"]
 
 
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ('["x&y"]', ["x&y"]),
+        ('["x&y", 紧急]', ["x&y", "紧急"]),
+        ("['a&b']", ["a&b"]),
+        ('["a", b, \'c\']', ["a", "b", "c"]),
+        ('"x&y"', ["x&y"]),
+        ('a, "b&c"', ["a", "b&c"]),
+    ],
+)
+def test_tag_items_have_paired_quotes_stripped(tmp_path, value, expected):
+    path = md(tmp_path, "task.md", f"---\ntags: {value}\n---\n")
+
+    assert parse_file(path).tags == expected
+
+
+def test_flow_style_quoted_tag_with_ampersand_and_chinese(tmp_path):
+    path = md(tmp_path, "task.md", '---\ntitle: t\ntags: ["x&y", "中文紧急"]\n---\n')
+
+    tags = parse_file(path).tags
+
+    assert tags == ["x&y", "中文紧急"]
+    assert all('"' not in t and "'" not in t for t in tags)
+
+
 # --- 换行与 BOM -------------------------------------------------------------
 
 

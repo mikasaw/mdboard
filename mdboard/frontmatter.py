@@ -97,4 +97,10 @@ def _read_tags(value: str) -> list[str]:
         value = value[1:]
     if value.endswith("]"):
         value = value[:-1]
-    return [item.strip() for item in value.split(",") if item.strip()]
+    # 逐项剥离成对引号（与 title/status 同一 _unquote），否则 ["x&y"] 会带出引号污染渲染。
+    tags = []
+    for item in value.split(","):
+        tag = _unquote(item)
+        if tag:
+            tags.append(tag)
+    return tags
