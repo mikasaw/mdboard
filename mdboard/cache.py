@@ -1,0 +1,197 @@
+"""S3：增量重建——mtime+size 快照、卡片片段缓存、整页拼装。"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from mdboard.frontmatter import MARKDOWN_SUFFIXES, parse_file
+from mdboard.render import COLUMN_STATUSES, _CSS, render_card
+
+
+@dataclass(frozen=True)
+class TaskMeta:
+    # mtime + size 是复用判定的依据（本阶段裁决 #1/#2：命中即不打开文件解析）。
+    mtime: float
+    size: int
+    # source / status 也持久化进 state.json（落盘布局要求），因为零重解析运行时
+    # 拼整页时仍需知道每张卡片的列归属与排序键，而不再解析 .md。
+    source: str
+    status: str
+
+
+@dataclass
+class RebuildReport:
+    parsed: list[str]       # 本次真正走 parse_file 的源文件（posix source）
+    reused: list[str]       # 命中快照、未解析的源文件
+    changed: list[str]      # 渲染产物字节发生变化的源文件（含新增）
+    removed: list[str]      # 源文件已消失，卡片产物与状态条目被清掉
+    rebuilt_page: bool      # index.html 是否被重写
+
+
+def load_state(cache_file: str | Path) -> dict[str, TaskMeta]:
+    """读取快照；文件不存在或整体损坏返回 {}（→ 全量重建），不抛异常（裁决 #6）。"""
+    path = Path(cache_file)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    state: dict[str, TaskMeta] = {}
+    for key, rec in raw.items():
+        if not isinstance(rec, dict):
+            continue
+        try:
+            state[key] = TaskMeta(
+                mtime=float(rec["mtime"]),
+                size=int(rec["size"]),
+                source=str(rec["source"]),
+                status=str(rec["status"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            # 单条记录损坏 → 丢弃该条，对应文件按新增重解析；不影响其余快照。
+            continue
+    return state
+
+
+def save_state(cache_file: str | Path, state: dict[str, TaskMeta]) -> None:
+    """写快照：先写临时文件再原子替换；按 key 排序，输出逐字节确定。"""
+    path = Path(cache_file)
+    payload = {
+        key: {
+            "source": meta.source,
+            "mtime": meta.mtime,
+            "size": meta.size,
+            "status": meta.status,
+        }
+        for key, meta in sorted(state.items())
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    _atomic_write(path, text.encode("utf-8"))
+
+
+def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
+    tasks_dir = Path(tasks_dir)
+    out = Path(out_dir)
+    cards_dir = out / "cards"
+    state_file = out / "state.json"
+    index_file = out / "index.html"
+    cards_dir.mkdir(parents=True, exist_ok=True)  # 裁决 #6：目录不存在则创建
+
+    old = load_state(state_file)
+
+    report = RebuildReport(parsed=[], reused=[], changed=[], removed=[], rebuilt_page=False)
+    new_state: dict[str, TaskMeta] = {}
+    fragments: dict[str, list[tuple[str, str]]] = {status: [] for status in COLUMN_STATUSES}
+    seen: set[str] = set()
+
+    for entry in sorted(tasks_dir.iterdir()):
+        if not entry.is_file() or entry.suffix.lower() not in MARKDOWN_SUFFIXES:
+            continue
+        source = _posix_source(entry, tasks_dir)
+        key = _key(source)
+        seen.add(key)
+        stat = entry.stat()
+        mtime, size = stat.st_mtime, stat.st_size
+        card_path = cards_dir / f"{key}.html"
+        prev = old.get(key)
+
+        if prev is not None and prev.mtime == mtime and prev.size == size:
+            # 命中快照：绝不打开源文件解析（裁决 #1）。片段已在磁盘上，直接复用。
+            report.reused.append(source)
+            card_html = card_path.read_text(encoding="utf-8")
+            status = prev.status
+            new_state[key] = TaskMeta(mtime=mtime, size=size, source=source, status=status)
+            fragments.setdefault(status, []).append((source, card_html))
+            continue
+
+        # 变更或新增：真正解析（FrontMatterError 向上抛给 cli，裁决 #7）。
+        report.parsed.append(source)
+        task = parse_file(entry)
+        card_html = render_card(task)
+        status = task.status
+        new_bytes = card_html.encode("utf-8")
+        old_bytes = card_path.read_bytes() if card_path.exists() else None
+        if old_bytes != new_bytes:
+            # 产物字节变了才重写；未变时保持原 mtime 不前进（裁决 #3/#4）。
+            _atomic_write(card_path, new_bytes)
+            report.changed.append(source)
+        new_state[key] = TaskMeta(mtime=mtime, size=size, source=source, status=status)
+        fragments.setdefault(status, []).append((source, card_html))
+
+    for key, meta in old.items():
+        if key not in seen:
+            report.removed.append(meta.source)
+            stale = cards_dir / f"{key}.html"
+            if stale.exists():
+                stale.unlink()
+
+    ordered = {status: sorted(items, key=lambda item: item[0]) for status, items in fragments.items()}
+    page_bytes = _assemble_page(ordered).encode("utf-8")
+    if not index_file.exists() or index_file.read_bytes() != page_bytes:
+        _atomic_write(index_file, page_bytes)
+        report.rebuilt_page = True
+
+    save_state(state_file, new_state)
+    return report
+
+
+def _posix_source(path: Path, root: Path) -> str:
+    """看板输入是单层目录（架构师裁决 #1）：以相对 root 的 posix 路径为身份与排序键。"""
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(path).replace("\\", "/")
+
+
+def _key(posix_source: str) -> str:
+    return hashlib.sha1(posix_source.encode("utf-8")).hexdigest()[:16]
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
+def _assemble_page(fragments_by_status: dict[str, list[tuple[str, str]]]) -> str:
+    """从已缓存的卡片片段拼装整页，不重新 render_card；结构对齐 S2，输出确定。"""
+    columns = "\n".join(
+        _assemble_column(status, fragments_by_status.get(status, [])) for status in COLUMN_STATUSES
+    )
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="zh">\n'
+        "  <head>\n"
+        '    <meta charset="utf-8">\n'
+        "    <title>mdboard</title>\n"
+        "    <style>\n"
+        f"{_CSS}"
+        "    </style>\n"
+        "  </head>\n"
+        "  <body>\n"
+        '    <main class="board">\n'
+        f"{columns}\n"
+        "    </main>\n"
+        "  </body>\n"
+        "</html>\n"
+    )
+
+
+def _assemble_column(status: str, items: list[tuple[str, str]]) -> str:
+    cards = "\n".join(card for _, card in items)
+    lines = [
+        f'      <section class="column" data-status="{status}">',
+        f'        <h2 class="column-title">{status}</h2>',
+        '        <div class="cards">',
+    ]
+    if cards:
+        lines.append(cards)
+    lines.extend(["        </div>", "      </section>"])
+    return "\n".join(lines)
