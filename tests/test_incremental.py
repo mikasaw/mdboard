@@ -468,7 +468,7 @@ def test_cli_reports_io_error_without_traceback(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Traceback" not in captured.err
-    assert str(missing) in captured.err  # 原因照旧带着，不被吞掉
+    assert missing.name in captured.err  # 原因照旧带着，不被吞掉（OSError 消息里是 repr 路径）
     assert "mdboard:" in captured.err
 
 
