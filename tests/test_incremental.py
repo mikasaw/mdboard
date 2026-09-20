@@ -10,7 +10,7 @@ import pytest
 
 from mdboard import cli
 from mdboard.cache import RebuildReport, TaskMeta, build, load_state, save_state
-from mdboard.render import render_card
+from mdboard.render import render_card, write_page
 from mdboard.frontmatter import Task
 
 STDLIB_ROOTS = frozenset(sys.stdlib_module_names)
@@ -203,6 +203,62 @@ def test_state_json_layout_matches_contract(tmp_path):
     assert "<title>mdboard</title>" in page
     for status in ("todo", "doing", "done"):
         assert f'data-status="{status}"' in page
+
+
+# --- M1：整页模板只有一个所有者，两条出口逐字节一致 ------------------------
+
+
+def test_build_index_matches_write_page_byte_for_byte(tmp_path):
+    specs = [
+        ("a.md", "A & co", "todo", ["x"]),
+        ("b.md", "B", "doing", []),
+        ("c.md", "中文标题", "done", ["紧急"]),
+    ]
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    for name, title, status, tags in specs:
+        write_task(tasks, name, title=title, status=status, tags=tags)
+    build(tasks, out)
+    from_build = (out / "index.html").read_bytes()
+
+    written = write_page(
+        [Task(source=name, title=title, status=status, tags=list(tags)) for name, title, status, tags in specs],
+        tmp_path / "page.html",
+    )
+
+    assert written.read_bytes() == from_build
+    assert b"\r\n" not in from_build
+    # write_page 碰过之后下一次 build 不该白重写整页。
+    assert build(tasks, out).rebuilt_page is False
+
+
+def test_write_page_then_build_does_not_rewrite_cards(tmp_path):
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A", tags=["x"])
+    build(tasks, out)
+    write_page([Task(source="a.md", title="A", status="todo", tags=["x"])], out / "index.html")
+    before = snapshot_mtimes(out)
+
+    report = build(tasks, out)
+
+    assert report.parsed == [] and report.changed == []
+    assert snapshot_mtimes(out) == before
+
+
+# --- M1 自检：cache.py 不从 render 导入私有名 -------------------------------
+
+
+def test_cache_imports_no_private_names_from_render():
+    source_path = Path(__file__).resolve().parents[1] / "mdboard" / "cache.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "mdboard.render":
+            imported.update(alias.name for alias in node.names)
+
+    assert imported  # 确实从 render 拿了东西，不是空断言
+    assert sorted(name for name in imported if name.startswith("_")) == []
 
 
 # --- load_state / save_state 单元 -------------------------------------------

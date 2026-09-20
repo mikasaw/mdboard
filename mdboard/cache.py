@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mdboard.frontmatter import MARKDOWN_SUFFIXES, parse_file
-from mdboard.render import COLUMN_STATUSES, _CSS, render_card
+from mdboard.render import COLUMN_STATUSES, render_card, render_page_from_fragments
 
 
 @dataclass(frozen=True)
@@ -131,8 +131,7 @@ def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
             if stale.exists():
                 stale.unlink()
 
-    ordered = {status: sorted(items, key=lambda item: item[0]) for status, items in fragments.items()}
-    page_bytes = _assemble_page(ordered).encode("utf-8")
+    page_bytes = render_page_from_fragments(fragments).encode("utf-8")
     if not index_file.exists() or index_file.read_bytes() != page_bytes:
         _atomic_write(index_file, page_bytes)
         report.rebuilt_page = True
@@ -158,40 +157,3 @@ def _atomic_write(path: Path, data: bytes) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(data)
     os.replace(tmp, path)
-
-
-def _assemble_page(fragments_by_status: dict[str, list[tuple[str, str]]]) -> str:
-    """从已缓存的卡片片段拼装整页，不重新 render_card；结构对齐 S2，输出确定。"""
-    columns = "\n".join(
-        _assemble_column(status, fragments_by_status.get(status, [])) for status in COLUMN_STATUSES
-    )
-    return (
-        "<!DOCTYPE html>\n"
-        '<html lang="zh">\n'
-        "  <head>\n"
-        '    <meta charset="utf-8">\n'
-        "    <title>mdboard</title>\n"
-        "    <style>\n"
-        f"{_CSS}"
-        "    </style>\n"
-        "  </head>\n"
-        "  <body>\n"
-        '    <main class="board">\n'
-        f"{columns}\n"
-        "    </main>\n"
-        "  </body>\n"
-        "</html>\n"
-    )
-
-
-def _assemble_column(status: str, items: list[tuple[str, str]]) -> str:
-    cards = "\n".join(card for _, card in items)
-    lines = [
-        f'      <section class="column" data-status="{status}">',
-        f'        <h2 class="column-title">{status}</h2>',
-        '        <div class="cards">',
-    ]
-    if cards:
-        lines.append(cards)
-    lines.extend(["        </div>", "      </section>"])
-    return "\n".join(lines)

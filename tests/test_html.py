@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 
 from mdboard.frontmatter import Task
-from mdboard.render import COLUMN_STATUSES, render_card, render_page, write_page
+from mdboard.render import (
+    COLUMN_STATUSES,
+    render_card,
+    render_page,
+    render_page_from_fragments,
+    write_page,
+)
 
 STDLIB_ROOTS = frozenset(sys.stdlib_module_names)
 
@@ -158,6 +164,41 @@ def test_render_page_is_deterministic_regardless_of_input_order():
     tasks_a = [task(source="b.md", title="B"), task(source="a.md", title="A")]
     tasks_b = [task(source="a.md", title="A"), task(source="b.md", title="B")]
     assert render_page(tasks_a) == render_page(tasks_b)
+
+
+# --- 模板唯一所有者（M1）---------------------------------------------------
+
+
+def test_render_page_and_fragments_share_one_template():
+    """render_page 与片段出口对同一批卡片产出逐字节相同的页面。"""
+    tasks = [task(source="b.md", title="B", tags=["y"]), task(source="a.md", title="A & co")]
+    fragments = {s: [] for s in COLUMN_STATUSES}
+    for t in tasks:
+        fragments[t.status].append((t.source, render_card(t)))
+
+    assert render_page_from_fragments(fragments) == render_page(tasks)
+
+
+def test_page_sorts_fragments_by_source_regardless_of_call_order():
+    a, b = task(source="a.md", title="A"), task(source="z.md", title="Z")
+    unordered = {"todo": [("z.md", render_card(b)), ("a.md", render_card(a))]}
+
+    assert CARD_TITLES.findall(render_page_from_fragments(unordered)) == ["A", "Z"]
+    assert render_page_from_fragments(unordered) == render_page([b, a])
+
+
+def test_fragment_exit_emits_three_columns_even_when_empty():
+    out = render_page_from_fragments({})
+    assert out.count("<section") == 3
+    assert out == render_page([])
+
+
+def test_write_page_writes_lf_bytes_identical_to_render_page(tmp_path):
+    tasks = [task(source="a.md", title="你好", tags=["标签"])]
+    written = write_page(tasks, tmp_path / "index.html")
+
+    assert written.read_bytes() == render_page(tasks).encode("utf-8")
+    assert b"\r" not in written.read_bytes()
 
 
 # --- write_page -----------------------------------------------------------

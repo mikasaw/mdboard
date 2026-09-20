@@ -1,8 +1,14 @@
-"""S2：把 Task 渲染成单文件 HTML 看板。"""
+"""S2：把 Task 渲染成单文件 HTML 看板。
+
+整页模板与列模板在本模块只有一个所有者：`render_page_from_fragments` 接受已渲染的
+卡片片段并产出整页，`render_page` 只是"先 render_card 再委派"的薄封装。任何下游
+（含增量重建）都不得另抄一份模板，否则两处会分叉。
+落盘换行统一为 LF：本模块产出的字符串只含 \n，写文件一律按字节写（见 write_page）。
+"""
 from __future__ import annotations
 
 import html
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from mdboard.frontmatter import Task
@@ -48,9 +54,30 @@ def render_card(task: Task) -> str:
 
 
 def render_page(tasks: Iterable[Task]) -> str:
-    """完整单文件页面；整表顺序的唯一来源在此，确定性由本函数保证。"""
-    all_tasks = list(tasks)
-    columns = "\n".join(_render_column(status, all_tasks) for status in COLUMN_STATUSES)
+    """完整单文件页面；逐卡渲染后交给 render_page_from_fragments。"""
+    columns: dict[str, list[tuple[str, str]]] = {status: [] for status in COLUMN_STATUSES}
+    for task in tasks:
+        columns.setdefault(task.status, []).append((task.source, render_card(task)))
+    return render_page_from_fragments(columns)
+
+
+def render_page_from_fragments(columns: Mapping[str, Iterable[tuple[str, str]]]) -> str:
+    """整页模板的唯一出口：接受已渲染的卡片片段，不重新 render_card。
+
+    每项是 (排序键, 卡片片段)，排序键就是 Task.source（列内排序与 source 规范化都由
+    本函数负责，调用方无需预排序）。列容器恒为 COLUMN_STATUSES 三列、顺序固定，
+    落在其它 status 上的片段因此不进入页面——与 render_page 一贯的行为一致。
+    """
+    groups = {
+        status: sorted(columns.get(status, ()), key=lambda item: _norm_source(item[0]))
+        for status in COLUMN_STATUSES
+    }
+    return _page_html(
+        "\n".join(_column_html(status, groups[status]) for status in COLUMN_STATUSES)
+    )
+
+
+def _page_html(columns_html: str) -> str:
     return (
         "<!DOCTYPE html>\n"
         '<html lang="zh">\n'
@@ -63,7 +90,7 @@ def render_page(tasks: Iterable[Task]) -> str:
         "  </head>\n"
         "  <body>\n"
         '    <main class="board">\n'
-        f"{columns}\n"
+        f"{columns_html}\n"
         "    </main>\n"
         "  </body>\n"
         "</html>\n"
@@ -71,21 +98,20 @@ def render_page(tasks: Iterable[Task]) -> str:
 
 
 def write_page(tasks: Iterable[Task], out_path: str | Path) -> Path:
-    """把页面写入 out_path；若给的是目录则落到其中的 index.html。返回实际写入路径。"""
+    """把页面写入 out_path；若给的是目录则落到其中的 index.html。返回实际写入路径。
+
+    按字节写 LF——与增量重建的落盘方式一致，同一组输入两处产物逐字节相同。
+    """
     path = Path(out_path)
     if path.is_dir():
         path = path / "index.html"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_page(tasks), encoding="utf-8")
+    path.write_bytes(render_page(tasks).encode("utf-8"))
     return path
 
 
-def _render_column(status: str, tasks: list[Task]) -> str:
-    ordered = sorted(
-        (task for task in tasks if task.status == status),
-        key=lambda task: task.source.replace("\\", "/"),
-    )
-    cards = "\n".join(render_card(task) for task in ordered)
+def _column_html(status: str, items: list[tuple[str, str]]) -> str:
+    cards = "\n".join(card for _, card in items)
     lines = [
         f'      <section class="column" data-status="{status}">',
         f'        <h2 class="column-title">{status}</h2>',
@@ -95,3 +121,7 @@ def _render_column(status: str, tasks: list[Task]) -> str:
         lines.append(cards)
     lines.extend(["        </div>", "      </section>"])
     return "\n".join(lines)
+
+
+def _norm_source(source: str) -> str:
+    return source.replace("\\", "/")
