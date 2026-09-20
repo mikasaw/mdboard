@@ -86,6 +86,12 @@ def save_state(cache_file: str | Path, state: dict[str, TaskMeta]) -> None:
 
 
 def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
+    """增量重建一次看板：快照命中即复用磁盘上的卡片片段，不打开源文件。
+
+    out_dir 与 tasks_dir 必须 1:1。卡片片段与 state.json 的 key 只取相对 tasks_dir
+    的 posix 路径（不含目录身份，属裁决 #2 已接受限制的同一家族），两个任务目录共用
+    一个 out_dir 会互相串台——命中对方留下的快照，页面显示前一个目录的标题。
+    """
     tasks_dir = Path(tasks_dir)
     out = Path(out_dir)
     cards_dir = out / "cards"
