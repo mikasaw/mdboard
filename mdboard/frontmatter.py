@@ -3,6 +3,7 @@
 契约细节（均已裁定，改动前先读，别让它以回归形式冒出来）：
 - flow-style 标签里，引号内的逗号属于标签内容：tags: ["a,b", c] → ["a,b", "c"]。
   引号不配对时退回朴素按逗号切分，不因此吞掉后面的标签。
+- 同一字段重复出现时 last-wins：后出现的值生效，不报错（_read_fields 逐行覆盖）。
 """
 from __future__ import annotations
 

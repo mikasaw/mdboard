@@ -78,6 +78,17 @@ def test_field_line_without_colon_is_skipped(tmp_path):
     assert parse_file(path).title == "t"
 
 
+def test_duplicate_field_is_last_wins(tmp_path):
+    """#10 裁定：重复字段 last-wins 是契约行为，静默覆盖而非报错。"""
+    path = md(
+        tmp_path,
+        "task.md",
+        "---\ntitle: first\ntitle: second\nstatus: todo\nstatus: doing\ntags: a\ntags: b\n---\n",
+    )
+
+    assert parse_file(path) == Task(source=str(path), title="second", status="doing", tags=["b"])
+
+
 # --- status 归一化与非法值 -------------------------------------------------
 
 
