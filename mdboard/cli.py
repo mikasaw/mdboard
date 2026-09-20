@@ -15,8 +15,9 @@ def main(argv: list[str] | None = None) -> int:
     tasks_dir, out_dir = args
     try:
         report = build(tasks_dir, out_dir)
-    except FrontMatterError as exc:
-        # 裁决 #7：解析失败打到 stderr，退出码 1，不吞掉异常原因。
+    except (FrontMatterError, OSError) as exc:
+        # 裁决 #7：失败原因打到 stderr、退出码 1，不外抛堆栈。OSError 一并接住：
+        # tasks_dir 不存在时 build 里是裸的 iterdir()，命令行不该看到 traceback。
         print(f"mdboard: {exc}", file=sys.stderr)
         return 1
     print(

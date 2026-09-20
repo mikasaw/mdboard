@@ -458,6 +458,20 @@ def test_cli_surfaces_parse_error_with_reason(tmp_path, capsys):
     assert "broken.md" in captured.err  # 不吞掉异常原因（带来源路径）
 
 
+def test_cli_reports_io_error_without_traceback(tmp_path, capsys):
+    """#7：tasks_dir 不存在时走 stderr + 退出码 1，不外抛堆栈。"""
+    missing = tmp_path / "no-such-tasks"
+
+    code = cli.main([str(missing), str(tmp_path / "build")])
+
+    assert code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
+    assert str(missing) in captured.err  # 原因照旧带着，不被吞掉
+    assert "mdboard:" in captured.err
+
+
 # --- 无第三方依赖（与 S2 同款守卫） -----------------------------------------
 
 
