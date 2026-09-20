@@ -159,6 +159,44 @@ def test_corrupt_state_json_is_treated_as_empty(tmp_path):
     assert report.parsed == ["a.md"]  # 全量重建，未抛异常
 
 
+# --- M2：片段丢失/坏掉 = 快照未命中，连跑必收敛且不抛异常 ------------------
+
+
+def test_deleted_fragments_self_heal_and_converge(tmp_path):
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    write_task(tasks, "b.md", title="B", status="done")
+    build(tasks, out)
+    for fragment in (out / "cards").glob("*.html"):
+        fragment.unlink()
+
+    first = build(tasks, out)  # 不抛异常：删掉的片段按新增重解析
+    assert sorted(first.parsed) == ["a.md", "b.md"]
+    assert first.reused == []
+    assert "<h3 class=\"card-title\">A</h3>" in (out / "index.html").read_text(encoding="utf-8")
+
+    second = build(tasks, out)
+    assert second.parsed == [] and second.reused == ["a.md", "b.md"]
+    assert build(tasks, out).parsed == []  # 第三次依然复用，不是只修好一次
+
+
+def test_unreadable_fragment_falls_back_to_reparse(tmp_path):
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    build(tasks, out)
+    (out / "cards" / _card_name("a.md")).write_bytes(b"\xff\xfe not utf-8 at all")
+
+    report = build(tasks, out)
+
+    assert report.parsed == ["a.md"]
+    assert report.reused == []
+    assert (out / "cards" / _card_name("a.md")).read_bytes() == render_card(
+        Task(source="a.md", title="A", status="todo", tags=[])
+    ).encode("utf-8")
+
+
 # --- 裁决 #6：out_dir / cards 不存在时创建；非递归输入 --------------------
 
 

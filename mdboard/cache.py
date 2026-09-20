@@ -103,12 +103,14 @@ def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
 
         if prev is not None and prev.mtime == mtime and prev.size == size:
             # 命中快照：绝不打开源文件解析（裁决 #1）。片段已在磁盘上，直接复用。
-            report.reused.append(source)
-            card_html = card_path.read_text(encoding="utf-8")
-            status = prev.status
-            new_state[key] = TaskMeta(mtime=mtime, size=size, source=source, status=status)
-            fragments.setdefault(status, []).append((source, card_html))
-            continue
+            cached = _read_fragment(card_path)
+            if cached is not None:
+                report.reused.append(source)
+                new_state[key] = TaskMeta(mtime=mtime, size=size, source=source, status=prev.status)
+                fragments.setdefault(prev.status, []).append((source, cached))
+                continue
+            # 片段读不出来（被删/被清空/坏掉）→ 当作快照未命中，退回重解析并自愈：
+            # 与裁决 #6"缓存坏掉即全量重建、不抛异常"同一原则，否则快照永远修不好。
 
         # 变更或新增：真正解析（FrontMatterError 向上抛给 cli，裁决 #7）。
         report.parsed.append(source)
@@ -150,6 +152,14 @@ def _posix_source(path: Path, root: Path) -> str:
 
 def _key(posix_source: str) -> str:
     return hashlib.sha1(posix_source.encode("utf-8")).hexdigest()[:16]
+
+
+def _read_fragment(path: Path) -> str | None:
+    """读缓存卡片片段；读不出来返回 None（调用方按快照未命中处理），不抛异常。"""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
