@@ -169,7 +169,15 @@ def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
                     pass
 
     page_bytes = render_page_from_fragments(fragments).encode("utf-8")
-    if not index_file.exists() or index_file.read_bytes() != page_bytes:
+    # 整页写不进去是真失败，与坏 front-matter 同一待遇：抛给 cli 合流成 stderr + 退出码 1，
+    # 不吞掉假装成功、不自愈。裸 OSError 只剩 [Errno 13]，这里补上"是哪一页、为什么"。
+    try:
+        current_bytes = index_file.read_bytes() if index_file.exists() else None
+    except OSError as exc:
+        raise OSError(
+            f"cannot read or rewrite index.html (blocked by a same-named directory?): {exc}"
+        ) from exc
+    if current_bytes != page_bytes:
         _atomic_write(index_file, page_bytes)
         report.rebuilt_page = True
 

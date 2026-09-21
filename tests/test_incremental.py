@@ -329,6 +329,54 @@ def test_cli_exits_zero_when_stale_card_is_a_directory(tmp_path, capsys):
     assert stale.is_dir()
 
 
+# --- #2：index.html 被同名目录占据 = 整页真失败，收口成可读原因 ----------------
+
+
+def test_index_taken_by_directory_raises_reason_naming_the_page(tmp_path):
+    """#2：挡路的是整页产物，异常必须点名 index.html 并保留原始 OSError。"""
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    build(tasks, out)
+
+    index = out / "index.html"
+    index.unlink()
+    index.mkdir()
+
+    with pytest.raises(OSError) as excinfo:
+        build(tasks, out)
+
+    reason = str(excinfo.value)
+    # 裸 OSError 只剩 "[Errno 13] Permission denied"，说不出是哪一步：消息要点名整页
+    assert "cannot read or rewrite index.html" in reason
+    assert str(excinfo.value.__cause__) in reason  # 翻译时不丢原始原因
+    assert excinfo.value.__cause__ is not None
+    assert index.is_dir()  # 不自愈：挡路的目录原样留着
+
+
+def test_cli_exits_one_when_index_is_taken_by_directory(tmp_path, capsys):
+    """#2 验收：退出码 1、stderr 有可读原因、无 traceback（与 #7 同一个合流口）。"""
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    cli.main([str(tasks), str(out)])
+    capsys.readouterr()
+
+    index = out / "index.html"
+    index.unlink()
+    index.mkdir()
+
+    code = cli.main([str(tasks), str(out)])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""  # 页面没写进去就不许打印重建报告
+    assert "Traceback" not in captured.err
+    assert "cannot read or rewrite index.html" in captured.err
+    assert "mdboard:" in captured.err  # 前缀只有 cli 加一次
+    assert not (out / "index.html.tmp").exists()  # 写侧走不到，不留半截临时文件
+
+
 # --- M3：state.json 的 key 不可信，不能拿它拼路径删缓存外的文件 -------------
 
 
