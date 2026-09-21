@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from mdboard import cli
-from mdboard.cache import RebuildReport, TaskMeta, build, load_state, save_state
+from mdboard.cache import RebuildReport, TaskMeta, _key, build, load_state, save_state
 from mdboard.render import render_card, write_page
 from mdboard.frontmatter import Task
 
@@ -124,7 +124,7 @@ def test_add_and_remove_leaves_no_residue(tmp_path):
     assert not (out / "cards" / gone_key).exists()
     assert {p.name for p in (out / "cards").glob("*.html")} == {_card_name("a.md"), _card_name("new.md")}
     state = json.loads((out / "state.json").read_text(encoding="utf-8"))
-    assert set(state) == {_key_of("a.md"), _key_of("new.md")}
+    assert set(state) == {_key("a.md"), _key("new.md")}
     assert all(rec["source"] in {"a.md", "new.md"} for rec in state.values())
 
 
@@ -212,7 +212,7 @@ def test_card_path_taken_by_directory_build_still_finishes(tmp_path):
     # 留一条已消失源文件的快照记录，它只可能被子单跑完的 save_state 清掉——
     # 用它坐实"自愈"：state.json 确实完成落盘，而不是异常前半路截断。
     state = json.loads((out / "state.json").read_text(encoding="utf-8"))
-    state[_key_of("gone.md")] = {
+    state[_key("gone.md")] = {
         "source": "gone.md",
         "mtime": 1.0,
         "size": 1,
@@ -227,8 +227,8 @@ def test_card_path_taken_by_directory_build_still_finishes(tmp_path):
     assert report.reused == ["b.md"]  # 只有被挡住的那张降级，其余照旧命中
     assert report.removed == ["gone.md"]
     saved = json.loads((out / "state.json").read_text(encoding="utf-8"))
-    assert set(saved) == {_key_of("a.md"), _key_of("b.md")}  # save_state 跑到了
-    assert saved[_key_of("a.md")] == {
+    assert set(saved) == {_key("a.md"), _key("b.md")}  # save_state 跑到了
+    assert saved[_key("a.md")] == {
         "source": "a.md",
         "mtime": (tasks / "a.md").stat().st_mtime,
         "size": (tasks / "a.md").stat().st_size,
@@ -303,7 +303,7 @@ def test_state_key_cannot_reach_outside_cards_dir(tmp_path):
     assert report.removed == []  # 该记录被丢弃，而不是被当成一个待删任务
     assert report.parsed == ["a.md"]  # 合法记录没了 → 全量重解析
     saved = json.loads((out / "state.json").read_text(encoding="utf-8"))
-    assert list(saved) == [_key_of("a.md")]
+    assert list(saved) == [_key("a.md")]
 
 
 @pytest.mark.parametrize(
@@ -312,7 +312,7 @@ def test_state_key_cannot_reach_outside_cards_dir(tmp_path):
 )
 def test_load_state_drops_keys_that_are_not_16_lowercase_hex(tmp_path, key):
     target = tmp_path / "state.json"
-    good = _key_of("a.md")
+    good = _key("a.md")
     payload = {key: {"source": "x.md", "mtime": 1.0, "size": 1, "status": "todo"},
                good: {"source": "a.md", "mtime": 2.0, "size": 3, "status": "doing"}}
     target.write_text(json.dumps(payload), encoding="utf-8")
@@ -326,7 +326,7 @@ def test_load_state_drops_keys_that_are_not_16_lowercase_hex(tmp_path, key):
 @pytest.mark.parametrize("status", ["archived", "TODO", "", "todo ", None])
 def test_load_state_drops_unknown_status(tmp_path, status):
     target = tmp_path / "state.json"
-    good, bad = _key_of("a.md"), _key_of("z.md")
+    good, bad = _key("a.md"), _key("z.md")
     payload = {
         good: {"source": "a.md", "mtime": 1.0, "size": 1, "status": "todo"},
         bad: {"source": "z.md", "mtime": 2.0, "size": 3, "status": status},
@@ -342,7 +342,7 @@ def test_illegal_status_in_state_forces_reparse_instead_of_vanishing_card(tmp_pa
     write_task(tasks, "a.md", title="A")
     build(tasks, out)
 
-    key = _key_of("a.md")
+    key = _key("a.md")
     state = json.loads((out / "state.json").read_text(encoding="utf-8"))
     state[key]["status"] = "archived"
     (out / "state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -413,13 +413,13 @@ def test_state_json_layout_matches_contract(tmp_path):
     write_task(tasks, "a.md", title="A", status="done", tags=["t1"])
     build(tasks, out)
     state = json.loads((out / "state.json").read_text(encoding="utf-8"))
-    assert list(state) == [_key_of("a.md")]
-    rec = state[_key_of("a.md")]
+    assert list(state) == [_key("a.md")]
+    rec = state[_key("a.md")]
     assert rec["source"] == "a.md"
     assert rec["status"] == "done"
     assert rec["size"] == len((tasks / "a.md").read_bytes())
     assert isinstance(rec["mtime"], float)
-    assert len(_key_of("a.md")) == 16
+    assert len(_key("a.md")) == 16
     # index.html 是完整看板页（三列 + 转义标题），由片段拼装而来。
     page = (out / "index.html").read_text(encoding="utf-8")
     assert "<title>mdboard</title>" in page
@@ -490,7 +490,7 @@ def test_load_state_roundtrips_and_survives_missing(tmp_path):
     missing = tmp_path / "nope.json"
     assert load_state(missing) == {}
     # key 必须是 _key() 的真实形状（16 位小写 hex）——非法 key 的记录会被 load_state 丢弃。
-    state = {_key_of("a.md"): TaskMeta(mtime=1.5, size=10, source="a.md", status="todo")}
+    state = {_key("a.md"): TaskMeta(mtime=1.5, size=10, source="a.md", status="todo")}
     save_state(missing, state)
     assert load_state(missing) == state
 
@@ -567,14 +567,8 @@ def test_cache_module_imports_only_stdlib():
     assert imported - STDLIB_ROOTS - first_party == set()
 
 
-# --- 辅助：与 cache._key 一致，但不 import 私有实现，独立算出卡片名 ----------
-
-
-def _key_of(posix_source: str) -> str:
-    import hashlib
-
-    return hashlib.sha1(posix_source.encode("utf-8")).hexdigest()[:16]
+# --- 辅助：直接复用生产键函数 cache._key，测试里不留第二份摘要实现 ------------
 
 
 def _card_name(posix_source: str) -> str:
-    return f"{_key_of(posix_source)}.html"
+    return f"{_key(posix_source)}.html"
