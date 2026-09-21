@@ -146,12 +146,11 @@ def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
             try:
                 _atomic_write(card_path, new_bytes)
             except OSError:
-                # 目标位置被同名目录占据，os.replace 也换不进去：只放弃这一格片段缓存。
-                # 整页用的是内存里的 card_html，页面不留在旧产物上；快照命中时
-                # _read_fragment 依然读不出 → 下一轮继续重解析补写，不静默跳过。
+                # 目标位置被同名目录占据，os.replace 也换不进去：只放弃这一格片段缓存，
+                # changed 照记——渲染产物确实变了，整页用的是内存里的 card_html。快照
+                # 命中时 _read_fragment 依然读不出 → 下一轮继续重解析补写，不静默跳过。
                 pass
-            else:
-                report.changed.append(source)
+            report.changed.append(source)
         new_state[key] = TaskMeta(mtime=mtime, size=size, source=source, status=status)
         fragments.setdefault(status, []).append((source, card_html))
 

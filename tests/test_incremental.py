@@ -223,6 +223,7 @@ def test_card_path_taken_by_directory_build_still_finishes(tmp_path):
     report = build(tasks, out)  # 不抛异常
 
     assert report.parsed == ["a.md"]  # 走重写路径，不是静默复用
+    assert report.changed == ["a.md"]  # 渲染产物变了照记，哪怕这一格缓存没落盘
     assert report.reused == ["b.md"]  # 只有被挡住的那张降级，其余照旧命中
     assert report.removed == ["gone.md"]
     saved = json.loads((out / "state.json").read_text(encoding="utf-8"))
@@ -233,6 +234,11 @@ def test_card_path_taken_by_directory_build_still_finishes(tmp_path):
         "size": (tasks / "a.md").stat().st_size,
         "status": "todo",
     }
+
+    # 障碍不撤就每轮都重解析、每轮都试着补写——不修好一次就停在旧产物上（M2 同款）。
+    again = build(tasks, out)
+    assert again.parsed == ["a.md"] and again.changed == ["a.md"]
+    assert again.reused == ["b.md"]
 
 
 def test_cli_exits_zero_when_card_cannot_be_cached(tmp_path, capsys):
@@ -253,20 +259,21 @@ def test_cli_exits_zero_when_card_cannot_be_cached(tmp_path, capsys):
 
     assert code == 0
     line = capsys.readouterr().out
-    assert "parsed=1" in line and "reused=1" in line
+    assert "parsed=1" in line and "reused=1" in line and "changed=1" in line
     page = (out / "index.html").read_text(encoding="utf-8")
     assert "A fresh" in page and ">A<" not in page  # 不留在旧产物上
 
     card.rmdir()  # 同名目录撤掉 → 该格片段缓存必须补得回来，不是永久降级
     assert cli.main([str(tasks), str(out)]) == 0
-    capsys.readouterr()
+    backfill = capsys.readouterr().out
+    assert "parsed=1" in backfill and "changed=1" in backfill
     assert card.is_file()
     assert card.read_bytes() == render_card(
         Task(source="a.md", title="A fresh", status="todo", tags=[])
     ).encode("utf-8")
     code3 = cli.main([str(tasks), str(out)])
     final = capsys.readouterr().out
-    assert code3 == 0 and "parsed=0" in final and "reused=2" in final
+    assert code3 == 0 and "parsed=0" in final and "reused=2" in final and "changed=0" in final
 
 
 # --- M3：state.json 的 key 不可信，不能拿它拼路径删缓存外的文件 -------------
