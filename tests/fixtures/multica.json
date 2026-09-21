@@ -1,0 +1,44 @@
+{
+  "issues": [
+    {
+      "identifier": "MIT-575",
+      "status": "done",
+      "updated_at": "2026-09-21T05:02:19Z",
+      "title": "fix(#1) stale 清理的 unlink 裸奔：加 OSError 守卫 + 回归测试（含变异自证）"
+    },
+    {
+      "identifier": "MIT-578",
+      "status": "backlog",
+      "updated_at": "2026-09-21T04:54:34Z",
+      "title": "全量复验：MIT-574 全局验收判据逐条独立复跑 + 独立变异自证 + PASS/FAIL"
+    },
+    {
+      "identifier": "MIT-566",
+      "status": "todo",
+      "updated_at": "2026-09-21T01:00:55Z",
+      "title": "A股的投资分析与投资管理"
+    },
+    {
+      "identifier": "MIT-549",
+      "status": "doing",
+      "updated_at": "2026-09-20T10:01:49Z",
+      "title": "NOTIFY-PROBE: Multica agent -> 既有 Qoder 会话注入实测"
+    },
+    {
+      "identifier": "MIT-553",
+      "status": "cancelled",
+      "updated_at": "2026-09-20T15:27:58Z",
+      "title": "mdboard 看板生成器开发（流水线首次全链路验证）"
+    },
+    {
+      "identifier": "MIT-576",
+      "status": "doing",
+      "updated_at": "2026-09-21T05:02:29Z",
+      "title": "fix(#2) index.html 被同名目录占据：读写两侧收口为干净失败 + 回归测试（含变异自证）"
+    }
+  ],
+  "has_more": false,
+  "limit": 6,
+  "offset": 0,
+  "total": 6
+}
