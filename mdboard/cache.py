@@ -175,7 +175,7 @@ def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
         current_bytes = index_file.read_bytes() if index_file.exists() else None
     except OSError as exc:
         raise OSError(
-            f"cannot read or rewrite index.html (blocked by a same-named directory?): {exc}"
+            f"cannot read index.html to decide whether to rewrite it: {exc}"
         ) from exc
     if current_bytes != page_bytes:
         _atomic_write(index_file, page_bytes)

@@ -348,7 +348,7 @@ def test_index_taken_by_directory_raises_reason_naming_the_page(tmp_path):
 
     reason = str(excinfo.value)
     # 裸 OSError 只剩 "[Errno 13] Permission denied"，说不出是哪一步：消息要点名整页
-    assert "cannot read or rewrite index.html" in reason
+    assert "cannot read index.html to decide whether to rewrite it" in reason
     assert str(excinfo.value.__cause__) in reason  # 翻译时不丢原始原因
     assert excinfo.value.__cause__ is not None
     assert index.is_dir()  # 不自愈：挡路的目录原样留着
@@ -372,7 +372,7 @@ def test_cli_exits_one_when_index_is_taken_by_directory(tmp_path, capsys):
     assert code == 1
     assert captured.out == ""  # 页面没写进去就不许打印重建报告
     assert "Traceback" not in captured.err
-    assert "cannot read or rewrite index.html" in captured.err
+    assert "cannot read index.html to decide whether to rewrite it" in captured.err
     assert "mdboard:" in captured.err  # 前缀只有 cli 加一次
     assert not (out / "index.html.tmp").exists()  # 写侧走不到，不留半截临时文件
 
