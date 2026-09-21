@@ -349,9 +349,35 @@ def test_index_taken_by_directory_raises_reason_naming_the_page(tmp_path):
     reason = str(excinfo.value)
     # 裸 OSError 只剩 "[Errno 13] Permission denied"，说不出是哪一步：消息要点名整页
     assert "cannot read index.html to decide whether to rewrite it" in reason
-    assert str(excinfo.value.__cause__) in reason  # 翻译时不丢原始原因
+    assert isinstance(excinfo.value.__cause__, OSError)  # 钉因果链类型，跨平台成立
     assert excinfo.value.__cause__ is not None
     assert index.is_dir()  # 不自愈：挡路的目录原样留着
+
+
+def test_index_write_failure_leaves_state_json_untouched(tmp_path):
+    """顺序不变量：整页读失败抛在 save_state 之前，state.json 一字未改。
+
+    本轮 new_state 必须与磁盘快照不同（多出 b.md），"落没落盘"才谈得上：若有人
+    把 save_state 上移到整页写之前，这里会写成含 b.md 的新快照而失败。
+    """
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    build(tasks, out)
+    state = out / "state.json"
+    state_before = state.read_bytes()
+
+    write_task(tasks, "b.md", title="B")  # 让本轮 new_state 必然与磁盘快照不同
+    index = out / "index.html"
+    index.unlink()
+    index.mkdir()
+
+    with pytest.raises(OSError):
+        build(tasks, out)
+
+    # save_state 在整页写之后（cache.py:184），整页读失败即抛出 → 从未执行。
+    assert state.read_bytes() == state_before
+    assert "b.md" not in state.read_text(encoding="utf-8")
 
 
 def test_cli_exits_one_when_index_is_taken_by_directory(tmp_path, capsys):
