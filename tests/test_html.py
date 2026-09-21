@@ -126,14 +126,34 @@ def test_template_alone_has_no_script_tag():
 # --- 排序与确定性 ---------------------------------------------------------
 
 
-def test_within_column_order_is_by_normalized_source():
-    tasks = [
-        task(source="dir\\b.md", title="B", status="todo"),
-        task(source="dir/a.md", title="A", status="todo"),
-        task(source="z.md", title="Z", status="todo"),
-    ]
-    out = render_page(tasks)
-    assert CARD_TITLES.findall(out) == ["A", "B", "Z"]
+# 字节序 0x2F('/') < 0x30('0') < 0x5C('\')，所以 "dir\b.md" 与 "dir0b.md" 这一对在
+# 归一化前后次序相反：未归一化的排序把 dir0b.md 排在前，归一化后它是 "dir/b.md"，
+# 比较到第三个字符就落到 dir0b.md 之后。夹具必须含这一对，否则排序去掉归一化也照样绿。
+@pytest.mark.parametrize(
+    "tasks, expected",
+    [
+        pytest.param(
+            [
+                task(source="dir0b.md", title="FLAT", status="todo"),
+                task(source="dir\\b.md", title="NESTED", status="todo"),
+                task(source="z.md", title="Z", status="todo"),
+            ],
+            ["NESTED", "FLAT", "Z"],
+            id="order-flips-across-normalization",
+        ),
+        pytest.param(
+            [
+                task(source="dir\\b.md", title="B", status="todo"),
+                task(source="dir/a.md", title="A", status="todo"),
+                task(source="z.md", title="Z", status="todo"),
+            ],
+            ["A", "B", "Z"],
+            id="separators-collapse-to-one-prefix",
+        ),
+    ],
+)
+def test_within_column_order_is_by_normalized_source(tasks, expected):
+    assert CARD_TITLES.findall(render_page(tasks)) == expected
 
 
 def test_tasks_are_partitioned_into_their_status_column():
