@@ -156,10 +156,17 @@ def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
 
     for key, meta in old.items():
         if key not in seen:
+            # 记账与磁盘状态解耦：unlink 成败都不阻止该记录被清出快照。
             report.removed.append(meta.source)
             stale = cards_dir / f"{key}.html"
             if stale.exists():
-                stale.unlink()
+                # 同名目录时 Windows 抛 PermissionError、POSIX 抛 IsADirectoryError，同为
+                # OSError 子类（与上方读片段处同一判据）。删不掉的目录留在磁盘上是无害孤儿；
+                # 递归删除则是事故——key 参与拼路径，这里绝不允许 rmtree。
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
 
     page_bytes = render_page_from_fragments(fragments).encode("utf-8")
     if not index_file.exists() or index_file.read_bytes() != page_bytes:

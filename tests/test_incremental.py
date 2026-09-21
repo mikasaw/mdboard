@@ -276,6 +276,59 @@ def test_cli_exits_zero_when_card_cannot_be_cached(tmp_path, capsys):
     assert code3 == 0 and "parsed=0" in final and "reused=2" in final and "changed=0" in final
 
 
+# --- #1：stale 清理遇到同名目录，unlink 不许冲出 build() --------------------
+
+
+def test_stale_card_taken_by_directory_is_removed_from_state(tmp_path):
+    """被删源文件的卡片产物是同名目录时：exists() 为真挡不住 unlink 的 OSError。"""
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    write_task(tasks, "gone.md", title="Gone", status="done")
+    build(tasks, out)
+
+    stale = out / "cards" / _card_name("gone.md")
+    stale.unlink()
+    stale.mkdir()
+    (tasks / "gone.md").unlink()
+
+    report = build(tasks, out)  # 不抛异常
+
+    assert report.removed == ["gone.md"]  # 删不掉也照记该 source
+    saved = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    # 记账与磁盘状态解耦：该记录一律从 state 移除，与 a.md 的快照正常落盘。
+    assert set(saved) == {_key("a.md")}
+    assert stale.is_dir()  # 无害孤儿留在磁盘上，没被递归删掉
+    assert "Gone" not in (out / "index.html").read_text(encoding="utf-8")
+
+    # 目录还在也不影响下一轮：那条记录已经不存在，不会再被当作 stale 反复清理。
+    again = build(tasks, out)
+    assert again.removed == [] and again.reused == ["a.md"]
+    assert stale.is_dir()
+
+
+def test_cli_exits_zero_when_stale_card_is_a_directory(tmp_path, capsys):
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    write_task(tasks, "gone.md", title="Gone")
+    cli.main([str(tasks), str(out)])
+    capsys.readouterr()
+
+    stale = out / "cards" / _card_name("gone.md")
+    stale.unlink()
+    stale.mkdir()
+    (tasks / "gone.md").unlink()
+
+    code = cli.main([str(tasks), str(out)])
+
+    assert code == 0
+    line = capsys.readouterr().out
+    assert "removed=1" in line
+    assert set(json.loads((out / "state.json").read_text(encoding="utf-8"))) == {_key("a.md")}
+    assert stale.is_dir()
+
+
 # --- M3：state.json 的 key 不可信，不能拿它拼路径删缓存外的文件 -------------
 
 
