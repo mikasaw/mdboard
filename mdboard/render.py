@@ -55,7 +55,7 @@ def render_card(task: Task) -> str:
 
 def render_page(tasks: Iterable[Task]) -> str:
     """完整单文件页面；逐卡渲染后交给 render_page_from_fragments。"""
-    columns: dict[str, list[tuple[str, str]]] = {status: [] for status in COLUMN_STATUSES}
+    columns: dict[str, list[tuple[str, str]]] = {}
     for task in tasks:
         columns.setdefault(task.status, []).append((task.source, render_card(task)))
     return render_page_from_fragments(columns)
