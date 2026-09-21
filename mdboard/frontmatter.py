@@ -2,6 +2,8 @@
 
 契约细节（均已裁定，改动前先读，别让它以回归形式冒出来）：
 - flow-style 标签里，引号内的逗号属于标签内容：tags: ["a,b", c] → ["a,b", "c"]。
+  引号只在条目起始处生效（YAML plain scalar 规则），条目中间的撇号是字面字符：
+  tags: don't, it's → ["don't", "it's"]，不是一个大标签。
   引号不配对时退回朴素按逗号切分，不因此吞掉后面的标签。
 - 同一字段重复出现时 last-wins：后出现的值生效，不报错（_read_fields 逐行覆盖）。
 """
@@ -126,7 +128,9 @@ def _split_flow_items(value: str) -> list[str]:
             current.append(ch)
             if ch == quote:
                 quote = ""
-        elif ch in "\"'":
+        elif ch in "\"'" and not "".join(current).strip():
+            # 只在条目起始处进入引号态（与 YAML plain scalar 一致）：否则 don't, it's
+            # 里两个撇号会撑起一段"引号内"，把中间那个逗号连同两个标签一起吞掉。
             quote = ch
             current.append(ch)
         elif ch == ",":

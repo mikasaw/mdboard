@@ -207,6 +207,22 @@ def test_apostrophe_inside_double_quoted_tag_survives(tmp_path):
     assert parse_file(path).tags == ["it's a, b", "c"]
 
 
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("don't, it's", ["don't", "it's"]),
+        ('["it\'s", "a,b"]', ["it's", "a,b"]),
+        ("rock'n'roll, pop", ["rock'n'roll", "pop"]),
+        ('a, "b,c"', ["a", "b,c"]),
+    ],
+)
+def test_quote_only_opens_at_item_start(tmp_path, value, expected):
+    """MINOR-1：条目中间的撇号是字面字符，不得撑起引号态吞掉后面的逗号。"""
+    path = md(tmp_path, "task.md", f"---\ntags: {value}\n---\n")
+
+    assert parse_file(path).tags == expected
+
+
 # --- 换行与 BOM -------------------------------------------------------------
 
 
