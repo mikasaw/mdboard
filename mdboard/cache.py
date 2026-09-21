@@ -134,11 +134,24 @@ def build(tasks_dir: str | Path, out_dir: str | Path) -> RebuildReport:
         card_html = render_card(task)
         status = task.status
         new_bytes = card_html.encode("utf-8")
-        old_bytes = card_path.read_bytes() if card_path.exists() else None
+        # 旧片段读不出来（被删、被同名目录占据）= 无可用旧片段 → 一律走重写路径。
+        # Windows 读目录抛 PermissionError、POSIX 抛 IsADirectoryError，同为 OSError
+        # 子类，因此只捕 OSError 即跨平台成立；捕 Exception 会把真实缺陷一起吞掉。
+        try:
+            old_bytes = card_path.read_bytes()
+        except OSError:
+            old_bytes = None
         if old_bytes != new_bytes:
             # 产物字节变了才重写；未变时保持原 mtime 不前进（裁决 #3/#4）。
-            _atomic_write(card_path, new_bytes)
-            report.changed.append(source)
+            try:
+                _atomic_write(card_path, new_bytes)
+            except OSError:
+                # 目标位置被同名目录占据，os.replace 也换不进去：只放弃这一格片段缓存。
+                # 整页用的是内存里的 card_html，页面不留在旧产物上；快照命中时
+                # _read_fragment 依然读不出 → 下一轮继续重解析补写，不静默跳过。
+                pass
+            else:
+                report.changed.append(source)
         new_state[key] = TaskMeta(mtime=mtime, size=size, source=source, status=status)
         fragments.setdefault(status, []).append((source, card_html))
 

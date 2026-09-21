@@ -197,6 +197,78 @@ def test_unreadable_fragment_falls_back_to_reparse(tmp_path):
     ).encode("utf-8")
 
 
+def test_card_path_taken_by_directory_build_still_finishes(tmp_path):
+    """#4：cards/<key>.html 是同名目录时，重解析分支不许抛出去，快照照常落盘。"""
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    write_task(tasks, "b.md", title="B", status="done")
+    build(tasks, out)
+
+    card = out / "cards" / _card_name("a.md")
+    card.unlink()
+    card.mkdir()  # 同名目录：_read_fragment 返回 None，旧片段读不出来
+
+    # 留一条已消失源文件的快照记录，它只可能被子单跑完的 save_state 清掉——
+    # 用它坐实"自愈"：state.json 确实完成落盘，而不是异常前半路截断。
+    state = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    state[_key_of("gone.md")] = {
+        "source": "gone.md",
+        "mtime": 1.0,
+        "size": 1,
+        "status": "todo",
+    }
+    (out / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    report = build(tasks, out)  # 不抛异常
+
+    assert report.parsed == ["a.md"]  # 走重写路径，不是静默复用
+    assert report.reused == ["b.md"]  # 只有被挡住的那张降级，其余照旧命中
+    assert report.removed == ["gone.md"]
+    saved = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    assert set(saved) == {_key_of("a.md"), _key_of("b.md")}  # save_state 跑到了
+    assert saved[_key_of("a.md")] == {
+        "source": "a.md",
+        "mtime": (tasks / "a.md").stat().st_mtime,
+        "size": (tasks / "a.md").stat().st_size,
+        "status": "todo",
+    }
+
+
+def test_cli_exits_zero_when_card_cannot_be_cached(tmp_path, capsys):
+    """片段缓存被同名目录挡住时，页面仍出最新内容，命令行退出码 0。"""
+    tasks = tmp_path / "tasks"
+    out = tmp_path / "build"
+    write_task(tasks, "a.md", title="A")
+    write_task(tasks, "b.md", title="B", status="done")
+    cli.main([str(tasks), str(out)])
+    capsys.readouterr()
+
+    card = out / "cards" / _card_name("a.md")
+    card.unlink()
+    card.mkdir()
+    write_task(tasks, "a.md", title="A fresh")  # 快照未命中 → 重解析 + 重写片段
+
+    code = cli.main([str(tasks), str(out)])
+
+    assert code == 0
+    line = capsys.readouterr().out
+    assert "parsed=1" in line and "reused=1" in line
+    page = (out / "index.html").read_text(encoding="utf-8")
+    assert "A fresh" in page and ">A<" not in page  # 不留在旧产物上
+
+    card.rmdir()  # 同名目录撤掉 → 该格片段缓存必须补得回来，不是永久降级
+    assert cli.main([str(tasks), str(out)]) == 0
+    capsys.readouterr()
+    assert card.is_file()
+    assert card.read_bytes() == render_card(
+        Task(source="a.md", title="A fresh", status="todo", tags=[])
+    ).encode("utf-8")
+    code3 = cli.main([str(tasks), str(out)])
+    final = capsys.readouterr().out
+    assert code3 == 0 and "parsed=0" in final and "reused=2" in final
+
+
 # --- M3：state.json 的 key 不可信，不能拿它拼路径删缓存外的文件 -------------
 
 
