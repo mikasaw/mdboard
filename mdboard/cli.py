@@ -3,14 +3,37 @@ from __future__ import annotations
 
 import sys
 
+from mdboard import __version__
 from mdboard.cache import build
 from mdboard.frontmatter import FrontMatterError
+
+USAGE = "usage: python -m mdboard.cli <tasks_dir> <out_dir>"
+
+HELP_TEXT = f"""\
+{USAGE}
+       python -m mdboard.cli --help
+       python -m mdboard.cli --version
+
+positional arguments:
+  tasks_dir   directory of single-level Markdown task cards
+  out_dir     directory to write index.html and cards/ into
+
+options:
+  --help      show this usage message, exit 0
+  --version   show the version, exit 0"""
 
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
+    # 元信息旗标只看首个参数：`--help` 出现在位置参数里属于用户的路径名，不抢。
+    if args[:1] == ["--help"]:
+        print(HELP_TEXT)
+        return 0
+    if args[:1] == ["--version"]:
+        print(f"mdboard {__version__}")
+        return 0
     if len(args) != 2:
-        print("usage: python -m mdboard.cli <tasks_dir> <out_dir>", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     tasks_dir, out_dir = args
     try:
